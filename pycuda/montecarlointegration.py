@@ -2,7 +2,6 @@ import pycuda.autoinit
 import pycuda.driver as drv
 import pycuda.curandom as curand
 import pycuda.reduction
-# from pycuda.curandom import XORWOWRandomNumberGenerator
 import numpy as np
 from pycuda.compiler import SourceModule
 # from pycuda import gpuarray
@@ -23,7 +22,7 @@ rng = curand.XORWOWRandomNumberGenerator()
 mod = SourceModule("""
 __global__ void gpucounts(float *a, float *b, int *counts)
 {
-  __shared__ int hitormiss[128];
+  __shared__ bool hitormiss[128];
 
   unsigned int tid = threadIdx.x;
   const int i = blockDim.x * blockIdx.x + threadIdx.x;
@@ -40,9 +39,11 @@ __global__ void gpucounts(float *a, float *b, int *counts)
 
   if (tid == 0)
   {
-    for (unsigned int s = 0; s < blockDim.x; s++)
+    counts[blockIdx.x] = hitormiss[0] ? 1 : 0;
+    for (unsigned int s = 1; s < blockDim.x; s++)
     {
-      counts[blockIdx.x] += hitormiss[s];
+      if (hitormiss[s])
+        counts[blockIdx.x] += 1;
     }
   }
   __syncthreads();
@@ -55,16 +56,11 @@ def get_pi_cuda():
     a_device = rng.gen_uniform((nvalues,), dtype=np.float32)
     b_device = rng.gen_uniform((nvalues,), dtype=np.float32)
 
-    dest = np.zeros(nvalues, dtype=np.int32)
-    counts = np.zeros(nblocks, dtype=np.int32)
-    # counts = np.int32(0)
+    counts = np.empty(nblocks, dtype=np.int32)
 
     gpucounts(a_device, b_device, drv.Out(counts), grid=(nblocks, 1), block=(block_size, 1, 1))
-    # print(np.sum(c), np.sum(dest))
     hitcount = np.sum(counts)
-    pi_est = hitcount / nvalues * 4
-
-    print(f'CUDA result: {pi_est}')
+    return hitcount
 
 
 def get_pi_cuda_redkern():
@@ -74,19 +70,29 @@ def get_pi_cuda_redkern():
     # a_device = curand.rand(nvalues, dtype=np.float32)
     # b_device = curand.rand(nvalues, dtype=np.float32)
     hitcount = krnl(a_device, b_device).get()
-
-    pi_est = hitcount / nvalues * 4
-    print(f'CUDA ReductionKernel result: {pi_est}')
+    return hitcount
 
 
 def get_pi_numpy():
     data = np.random.rand(nvalues, 2)
-    inside = len(np.argwhere(np.linalg.norm(data, axis=1) < 1))
+    hitcount = len(np.argwhere(np.linalg.norm(data, axis=1) < 1))
+    return hitcount
 
-    pi_est = float(inside) / nvalues * 4.
-    print(f'numpy result: {pi_est}')
+start = drv.Event()
+end = drv.Event()
+n_iter = 50
 
-ntrials = 10
-print(f'CUDA Kernel took {timeit.timeit(get_pi_cuda, number=ntrials)} s')
-print(f'CUDA ReductionKernel took {timeit.timeit(get_pi_cuda_redkern, number=ntrials)} s')
-print(f'numpy took {timeit.timeit(get_pi_numpy, number=ntrials)} s')
+for f, label in [(get_pi_cuda, 'CUDA Kernel'), (get_pi_cuda_redkern, 'CUDA ReductionKernel'), (get_pi_numpy, 'numpy')]:
+    start.record()
+    start.synchronize()
+    hitcount = 0
+    for i in range(n_iter):
+        hitcount += f()
+
+    end.record()
+    end.synchronize()
+    timeseconds = start.time_till(end) * 1e-3
+    pi_est = hitcount / nvalues / n_iter * 4
+
+    print(f'{label} after {n_iter} iterations:')
+    print(f'  pi_est {pi_est:.8f} time {timeseconds:3.4f} s ({n_iter * nvalues / timeseconds:.1e} evals/sec)')
