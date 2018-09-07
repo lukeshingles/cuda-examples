@@ -1,3 +1,4 @@
+"""Use a Monte Carlo integration technique to estimate the value of Pi and compare the performance between CUDA and numpy implementations."""
 import pycuda.autoinit
 import pycuda.driver as drv
 import pycuda.curandom as curand
