@@ -7,42 +7,34 @@ from pycuda.compiler import SourceModule
 # from pycuda import gpuarray
 import timeit
 
-# nvalues = 10 ** 7
-
 block_size = 128
-nblocks = 10000
+nblocks = 100000
 nvalues = nblocks * block_size
 
-krnl = pycuda.reduction.ReductionKernel(np.float32, neutral="0",
-        reduce_expr="a+b", map_expr="x[i] * x[i] + y[i] * y[i] < 1. ? 1 : 0",
-        arguments="float *x, float *y")
+mcreduction = pycuda.reduction.ReductionKernel(
+    np.int32, neutral="0", reduce_expr="a + b", map_expr="x[i] * x[i] + y[i] * y[i] < 1 ? 1 : 0",
+    arguments="const double *x, const double *y")
 
 rng = curand.XORWOWRandomNumberGenerator()
 
 mod = SourceModule("""
-__global__ void gpucounts(float *a, float *b, int *counts)
+__global__ void gpucounts(double *a, double *b, int *counts)
 {
-  __shared__ bool hitormiss[128];
+  __shared__ bool belowfunc[128];
 
   unsigned int tid = threadIdx.x;
   const int i = blockDim.x * blockIdx.x + threadIdx.x;
 
-  if ((a[i] * a[i] + b[i] * b[i]) < 1.)
-  {
-    hitormiss[tid] = 1;
-  }
-  else
-  {
-    hitormiss[tid] = 0;
-  }
+  belowfunc[tid] = ((a[i] * a[i] + b[i] * b[i]) < 1.);
+
   __syncthreads();
 
   if (tid == 0)
   {
-    counts[blockIdx.x] = hitormiss[0] ? 1 : 0;
-    for (unsigned int s = 1; s < blockDim.x; s++)
+    counts[blockIdx.x] = 0;
+    for (unsigned int s = 0; s < blockDim.x; s++)
     {
-      if (hitormiss[s])
+      if (belowfunc[s])
         counts[blockIdx.x] += 1;
     }
   }
@@ -53,8 +45,8 @@ __global__ void gpucounts(float *a, float *b, int *counts)
 gpucounts = mod.get_function("gpucounts")
 
 def get_pi_cuda():
-    a_device = rng.gen_uniform((nvalues,), dtype=np.float32)
-    b_device = rng.gen_uniform((nvalues,), dtype=np.float32)
+    a_device = rng.gen_uniform((nvalues,), dtype=np.float64)
+    b_device = rng.gen_uniform((nvalues,), dtype=np.float64)
 
     counts = np.empty(nblocks, dtype=np.int32)
 
@@ -64,12 +56,13 @@ def get_pi_cuda():
 
 
 def get_pi_cuda_redkern():
-    a_device = rng.gen_uniform((nvalues,), dtype=np.float32)
-    b_device = rng.gen_uniform((nvalues,), dtype=np.float32)
+    a_device = rng.gen_uniform((nvalues,), dtype=np.float64)
+    b_device = rng.gen_uniform((nvalues,), dtype=np.float64)
 
     # a_device = curand.rand(nvalues, dtype=np.float32)
     # b_device = curand.rand(nvalues, dtype=np.float32)
-    hitcount = krnl(a_device, b_device).get()
+
+    hitcount = mcreduction(a_device, b_device).get()
     return hitcount
 
 
@@ -78,9 +71,10 @@ def get_pi_numpy():
     hitcount = len(np.argwhere(np.linalg.norm(data, axis=1) < 1))
     return hitcount
 
+
 start = drv.Event()
 end = drv.Event()
-n_iter = 50
+n_iter = 10
 
 for f, label in [(get_pi_cuda, 'CUDA Kernel'), (get_pi_cuda_redkern, 'CUDA ReductionKernel'), (get_pi_numpy, 'numpy')]:
     start.record()
@@ -95,4 +89,4 @@ for f, label in [(get_pi_cuda, 'CUDA Kernel'), (get_pi_cuda_redkern, 'CUDA Reduc
     pi_est = hitcount / nvalues / n_iter * 4
 
     print(f'{label} after {n_iter} iterations:')
-    print(f'  pi_est {pi_est:.8f} time {timeseconds:3.4f} s ({n_iter * nvalues / timeseconds:.1e} evals/sec)')
+    print(f'  pi_est {pi_est:.8f} time {timeseconds:8.4f} s ({n_iter * nvalues / timeseconds:.2e} evals/sec)')
