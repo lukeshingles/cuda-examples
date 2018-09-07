@@ -1,7 +1,7 @@
 # cuda-examples
 NVIDIA CUDA examples in C and Python (pycuda)
 
-## Example output from Monte Carlo estimator for Pi
+## Example output from Monte Carlo pi estimator
 ```
 CUDA Kernel after 10 iterations:
   pi_est 3.14150703 time   1.2310 s (1.04e+08 evals/sec)
