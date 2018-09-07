@@ -1,4 +1,9 @@
-"""Use a Monte Carlo integration technique to estimate the value of Pi and compare the performance between CUDA and numpy implementations."""
+"""Use a Monte Carlo integration technique to estimate the value of Pi and compare the performance between CUDA and numpy implementations.
+
+A large set of random 2D points between 0,0 and 1,1 are generated.
+Those points that lie within the unit circle centred on 0,0 are considered 'hits' and all other points 'misses'.
+The ratio of hits / (hits + misses) is the ratio of area between one quadrant of the unit circle (pi/4) and the area from 0,0 to 1,1 (one unit squared).
+"""
 import pycuda.autoinit
 import pycuda.driver as drv
 import pycuda.curandom as curand
@@ -45,7 +50,7 @@ __global__ void gpucounts(double *a, double *b, int *counts)
 
 gpucounts = mod.get_function("gpucounts")
 
-def get_pi_cuda():
+def get_hitcount_cuda():
     a_device = rng.gen_uniform((nvalues,), dtype=np.float64)
     b_device = rng.gen_uniform((nvalues,), dtype=np.float64)
 
@@ -56,7 +61,7 @@ def get_pi_cuda():
     return hitcount
 
 
-def get_pi_cuda_redkern():
+def get_hitcount_cuda_redkern():
     a_device = rng.gen_uniform((nvalues,), dtype=np.float64)
     b_device = rng.gen_uniform((nvalues,), dtype=np.float64)
 
@@ -67,7 +72,7 @@ def get_pi_cuda_redkern():
     return hitcount
 
 
-def get_pi_numpy():
+def get_hitcount_numpy():
     data = np.random.rand(nvalues, 2)
     hitcount = len(np.argwhere(np.linalg.norm(data, axis=1) < 1))
     return hitcount
@@ -77,7 +82,7 @@ start = drv.Event()
 end = drv.Event()
 n_iter = 10
 
-for f, label in [(get_pi_cuda, 'CUDA Kernel'), (get_pi_cuda_redkern, 'CUDA ReductionKernel'), (get_pi_numpy, 'numpy')]:
+for f, label in [(get_hitcount_cuda, 'CUDA Kernel'), (get_hitcount_cuda_redkern, 'CUDA ReductionKernel'), (get_hitcount_numpy, 'numpy')]:
     start.record()
     start.synchronize()
     hitcount = 0
@@ -90,4 +95,4 @@ for f, label in [(get_pi_cuda, 'CUDA Kernel'), (get_pi_cuda_redkern, 'CUDA Reduc
     pi_est = hitcount / nvalues / n_iter * 4
 
     print(f'{label} after {n_iter} iterations:')
-    print(f'  pi_est {pi_est:.8f} time {timeseconds:8.4f} s ({n_iter * nvalues / timeseconds:.2e} evals/sec)')
+    print(f'  pi_est {pi_est:.8f} time {timeseconds:6.4f} s ({n_iter * nvalues / timeseconds:.2e} evals/sec)')
